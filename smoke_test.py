@@ -5,9 +5,10 @@ Not a full VMU emulator; checks our code path, input dispatch and VRAM copy only
 from pathlib import Path
 import json, struct, sys
 BUILD=Path(__file__).resolve().parent
-ROM=(BUILD/'STACKCHN.VMS').read_bytes()
-FRAMES=(BUILD/'frames.bin').read_bytes()
-SYM=json.loads((BUILD/'symbols.json').read_text())
+# Importing the reusable CPU must not require generated legacy build files.
+ROM=b''
+FRAMES=b''
+SYM={}
 
 def signed8(x):return x-256 if x&128 else x
 
@@ -115,6 +116,10 @@ class CPU:
 
 
 def test():
+ global ROM,FRAMES,SYM
+ ROM=(BUILD/'STACKCHN.VMS').read_bytes()
+ FRAMES=(BUILD/'frames.bin').read_bytes()
+ SYM=json.loads((BUILD/'symbols.json').read_text())
  c=CPU()
  frame_ids=[]
  # A at frame 40, B 67, UP 94, DOWN 121, LEFT 148, RIGHT 175
