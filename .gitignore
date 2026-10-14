@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+/vmudisc_tools/
+/VMU.Disc.Builder.v1.1.zip
+*.cdi
+*.iso
+*.build.log
+*.manifest.json
+/frame_??.png
+/symbols.json
