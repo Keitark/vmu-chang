@@ -1,6 +1,6 @@
 # BOING boot loader with the VMU transfer browser
 
-The optional `--hardware-startup` Audio/Data candidate reaches the VMU Disc Builder browser in Flycast 2.7 using its HLE BIOS and passes structural and all 85 payload-file checks. Its disc license code and boot loader match the confirmed-working BOING reference byte for byte. Physical Dreamcast boot and VMU transfer remain pending. The previous minimal candidate was burned and verified, but reached the Sega screen and froze on the physical Japanese Dreamcast.
+The optional `--hardware-startup` Audio/Data candidate boots to the VMU Disc Builder browser on the physical Japanese Dreamcast. On 2026-10-15, the user confirmed it booted and supplied a TV photo showing the browser home page. CD-R writing and full two-session read-back verification passed. The same image reaches the browser in Flycast 2.7 using its HLE BIOS and passes structural and all 85 payload-file checks. Its disc license code and boot loader match the confirmed-working BOING reference byte for byte. VMU transfer and standalone VMU operation remain pending. The previous minimal candidate was burned and verified, but reached the Sega screen and froze on the console.
 
 ## What changed
 
@@ -16,7 +16,7 @@ The drive-class experiment establishes the cause of the unadapted replacement im
 
 ## Optional hardware startup
 
-BOING's KOS application performs GD-ROM initialization and unlocking after the shared IP bootstrap. Copying that bootstrap alone does not copy the application's KOS startup. The minimal adapter omitted the original browser loader's corresponding setup. Missing initialization is a hypothesis for the console freeze, not a proven physical cause; successful HLE boot can hide a hardware dependency.
+BOING's KOS application performs GD-ROM initialization and unlocking after the shared IP bootstrap. Copying that bootstrap alone does not copy the application's KOS startup. The minimal adapter omitted the original browser loader's corresponding setup. The hardware-startup image now boots on the console, but it changes both initialization and the cache transition. Missing initialization remains a hypothesis for the previous freeze rather than an isolated, proven cause.
 
 `--hardware-startup` selects `boot_shim_hardware.S` with `VMU_FULL_GD_SETUP=1` and links `framebuffer_checkpoint.S`. It restores the original loader's Holly GD-ROM unlock write, full boot-ROM read, two guarded BIOS RAM patch searches, and GD-ROM initialization. Initialization polls have a fixed budget; failed requests, failed status, and timeout stop at a diagnostic checkpoint rather than continuing into the browser.
 
@@ -33,7 +33,7 @@ The helper draws cumulative color blocks into the existing framebuffer without s
 | 5 | Magenta | Initialization failed or timed out; execution stops |
 | 6 | Blue | P2 thunk reached after the native cache-control prologue |
 
-The normal path draws markers 1, 2, 3, 4, and 6, leaving the failure slot empty. A marker proves the point at which it is drawn; blue does not prove that the following native CRT entry executed. A separate HLE-only `CHECKPOINT_HOLD` control stops in the final thunk and visibly renders red, yellow, green, cyan, an empty failure slot, and blue over the Sega screen. This confirms marker rendering in the emulator control. Marker visibility and interpretation on the physical console remain pending.
+The normal path draws markers 1, 2, 3, 4, and 6, leaving the failure slot empty. A marker proves the point at which it is drawn; blue does not prove that the following native CRT entry executed. A separate HLE-only `CHECKPOINT_HOLD` control stops in the final thunk and visibly renders red, yellow, green, cyan, an empty failure slot, and blue over the Sega screen. This confirms marker rendering in the emulator control. The console photo confirms successful browser startup; individual marker visibility on the physical console has not been recorded.
 
 ![Hardware startup checkpoints in the HLE hold control](evidence/boing-hardware-init-v2-checkpoints.jpg)
 
@@ -75,8 +75,10 @@ Current local hardware-startup candidate: `VMU_STACKCHAN_BOING_HW_INIT_V2.cdi`, 
 | Browser and payload files | All 85 match the extracted source |
 | Flycast 2.7 HLE BIOS | VMU browser reached |
 | Checkpoint renderer | Visible in separate HLE hold control |
+| CD-R write | Passed; completed in 8:02 at 2026-10-15 03:06:35 JST |
+| Full two-session read-back verification | Passed; completed in 9:21 at 2026-10-15 03:16:17 JST |
 | Original BIOS emulator test | Not performed; no BIOS dump supplied |
-| Physical Dreamcast boot | Pending |
+| Physical Japanese Dreamcast | Passed: user confirmed boot and supplied a TV photo showing the VMU Disc Builder home page on 2026-10-15 |
 | VMU transfer and standalone VMU operation | Pending |
 
 ![Hardware-startup candidate browser in Flycast HLE](evidence/boing-hardware-init-v2-browser.jpg)
@@ -106,11 +108,11 @@ Previous minimal candidate: `VMU_STACKCHAN_BOING_VMU.cdi`, 740,246,665 bytes, SH
 
 The 14 tool regression tests pass, including hardware patch preservation, linked target bounds, oversize rejection before reading, and preservation of minimal-mode behavior. Earlier complete repository-tool builds passed for both Audio/Data and Data/Data; the Audio/Data result also passed structural validation. The validator rejects the previous unadapted BOING Audio/Data candidate because its executable and PVD FAD do not match the adapter. Data/Data tool-build success alone is not emulator or console acceptance.
 
-## Next investigation
+## Remaining validation
 
-The next physical test is the new hardware-startup candidate. Reaching the Sega screen narrows the previous failure to the subsequent startup path, but does not prove the browser main entry executed. The user's identification of a modified logo is uncertain; the logo alone does not establish execution of the new entry adapter.
+Physical browser startup is confirmed for the exact hardware-startup candidate SHA-256 `bc37e22f5eea580ed54ae4a9b927504feeb748d1a0e62d944cb2bea98aee14d9`. The next checks are VMU transfer and standalone VMU operation. Browser boot success does not establish either result.
 
-Record any visible checkpoint colors and whether the browser appears. A successful console browser test must be followed by VMU transfer and standalone VMU checks before declaring the issue resolved. This remains a draft investigation; restoring initialization and hardening the cache transition do not yet establish the cause of the physical freeze.
+The successful candidate restores initialization and hardens the cache transition together, so this test does not identify which change resolved the previous physical freeze. Keep the failed minimal candidate as historical evidence. The transfer workflow remains under validation until a VMS is installed and runs on the VMU itself.
 
 ## Primary references
 
