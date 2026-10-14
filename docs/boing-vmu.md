@@ -1,6 +1,6 @@
 # BOING boot loader with the VMU transfer browser
 
-The optional `--hardware-startup` Audio/Data candidate boots to the VMU Disc Builder browser on the physical Japanese Dreamcast. On 2026-10-15, the user confirmed it booted and supplied a TV photo showing the browser home page. CD-R writing and full two-session read-back verification passed. The same image reaches the browser in Flycast 2.7 using its HLE BIOS and passes structural and all 85 payload-file checks. Its disc license code and boot loader match the confirmed-working BOING reference byte for byte. VMU transfer and standalone VMU operation remain pending. The previous minimal candidate was burned and verified, but reached the Sega screen and froze on the console.
+The optional `--hardware-startup` Audio/Data candidate boots to the VMU Disc Builder browser on the physical Japanese Dreamcast. On 2026-10-15, the user confirmed it booted and supplied a TV photo showing the browser home page. A subsequent photo shows the browser reporting that saving `STACKCHAN` to the memory card on controller A, slot 1 is complete, and the user then confirmed standalone VMU boot. This establishes browser-reported transfer success and user-reported standalone startup. Full physical button/timing validation remains pending, and VMU contents have not been independently read back or hash-verified. CD-R writing and full two-session read-back verification passed. The same image reaches the browser in Flycast 2.7 using its HLE BIOS and passes structural and all 85 payload-file checks. Its disc license code and boot loader match the confirmed-working BOING reference byte for byte. The previous minimal candidate was burned and verified, but reached the Sega screen and froze on the console.
 
 ## What changed
 
@@ -79,7 +79,10 @@ Current local hardware-startup candidate: `VMU_STACKCHAN_BOING_HW_INIT_V2.cdi`, 
 | Full two-session read-back verification | Passed; completed in 9:21 at 2026-10-15 03:16:17 JST |
 | Original BIOS emulator test | Not performed; no BIOS dump supplied |
 | Physical Japanese Dreamcast | Passed: user confirmed boot and supplied a TV photo showing the VMU Disc Builder home page on 2026-10-15 |
-| VMU transfer and standalone VMU operation | Pending |
+| Physical VMU transfer | Passed at browser UI: user photo on 2026-10-15 shows save-complete for `STACKCHAN`, controller A, slot 1 |
+| VMU contents read-back/hash verification | Not performed |
+| Standalone VMU boot | Passed by user report on 2026-10-15 |
+| Physical VMU button responses and animation timing | Full validation pending |
 
 ![Hardware-startup candidate browser in Flycast HLE](evidence/boing-hardware-init-v2-browser.jpg)
 
@@ -110,9 +113,9 @@ The 14 tool regression tests pass, including hardware patch preservation, linked
 
 ## Remaining validation
 
-Physical browser startup is confirmed for the exact hardware-startup candidate SHA-256 `bc37e22f5eea580ed54ae4a9b927504feeb748d1a0e62d944cb2bea98aee14d9`. The next checks are VMU transfer and standalone VMU operation. Browser boot success does not establish either result.
+Physical browser startup is confirmed for the exact hardware-startup candidate SHA-256 `bc37e22f5eea580ed54ae4a9b927504feeb748d1a0e62d944cb2bea98aee14d9`. The browser's save-complete screen confirms reported transfer to the physical VMU, and the user subsequently confirmed standalone VMU boot. The original boot-and-transfer path has passed these physical checks. Remaining checks cover all button responses and animation timing; standalone startup alone does not establish those results. VMU flash contents have not been independently read back or hash-verified.
 
-The successful candidate restores initialization and hardens the cache transition together, so this test does not identify which change resolved the previous physical freeze. Keep the failed minimal candidate as historical evidence. The transfer workflow remains under validation until a VMS is installed and runs on the VMU itself.
+The successful candidate restores initialization and hardens the cache transition together, so this test does not identify which change resolved the previous physical freeze. Keep the failed minimal candidate as historical evidence. Broader VMU behavior remains under validation even though startup and transfer have passed.
 
 ## Primary references
 
