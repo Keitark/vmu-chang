@@ -27,6 +27,8 @@ Dreamcast の Visual Memory Unit（VMU）**単体**で動く、ｽﾀｯｸﾁ�
 - CD-Rへの書き込み成功や簡易CPUテスト成功は、DreamcastのCDIが正常起動する保証にはなりません。
 - **動作確認済みの `.cdi` は現時点では提供していません。** 繰り返しCD-Rに書き込む前に、ブート処理とFlycastでの動作確認が必要です。
 
+BOING と同じブートローダーを使い、ブラウザーのドライブ種別応答と Audio/Data のセクター位置を修正した候補は、Flycast 2.7 の HLE BIOS でブラウザー画面まで起動しました。実機 Dreamcast と VMU 転送の確認はまだ必要です。再現手順と検証結果は [BOING ブートローダー版](docs/boing-vmu.md) を参照してください。
+
 ## ソースコード
 
 `stackchan.s`（LC86Kアセンブリ）、`build_vms.py`、`make_art.py`、`smoke_test.py`、Windows用CDI構築スクリプト、および `STACKCHN.VMS` / `STACKCHN.VMI` を収録します。
