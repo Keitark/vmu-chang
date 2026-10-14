@@ -49,6 +49,7 @@ Tested local candidate: `VMU_STACKCHAN_BOING_VMU.cdi`, 740,246,665 bytes, SHA-25
 | `STACKCHN.VMS` | Original SHA-256 `a353ad9a1d69ee535c6859672a512fac1c6f2b1286a2816dcf116be0516d36dc` |
 | `STACKCHN.VMI` | Original SHA-256 `95a9d009a13be7e7deb955916e0ec767f451a892803421467eca8339fd7f070b` |
 | Flycast 2.7 HLE BIOS, Japan, composite | VMU browser reached |
+| CD-R write and ImgBurn read-back | Passed at 10x SAO; both sessions match the candidate; zero read errors or mismatches |
 | Original BIOS emulator test | Not performed; no BIOS dump supplied |
 | Physical console and VMU transfer | Pending |
 
