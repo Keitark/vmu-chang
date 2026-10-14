@@ -32,6 +32,8 @@ BOING と同じブートローダーを使い、ブラウザーのドライブ�
 
 ## ソースコード
 
+顔だけを表示するシンプル版は [Stack-chan Face](face/README.md) を参照してください。ebazchan の丸い目と直線の口を48×32ドットに適応し、まばたきだけを加えた4ブロックの別プログラムです。元の版はそのまま残しています。新しい版はローカルの18項目チェックに合格していますが、実機VMUでの確認はこれからです。
+
 `stackchan.s`（LC86Kアセンブリ）、`build_vms.py`、`make_art.py`、`smoke_test.py`、Windows用CDI構築スクリプト、および `STACKCHN.VMS` / `STACKCHN.VMI` を収録します。
 
 - `python make_art.py` — ドット絵・フレーム素材を生成（Pillowが必要）

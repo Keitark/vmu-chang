@@ -1,0 +1,191 @@
+; FACECHAN: a standalone, face-only Dreamcast Visual Memory Unit game.
+; Neutral face geometry adapted from ebazchan / M5Stack-Avatar.
+; M5Stack-Avatar: Copyright (c) 2018 Shinya Ishikawa, MIT License.
+; See THIRD_PARTY_NOTICES.txt distributed with this game.
+@REGS@
+; A, B and the directional pad do not change the face.
+; MODE returns to the VMU menu. SLEEP and dock exit retain the original paths.
+.org $0000
+    jmpf start
+.org $0003
+    reti
+.org $000B
+    reti
+.org $0013
+    reti
+.org $001B
+    jmpf timer_int
+.org $0023
+    reti
+.org $002B
+    reti
+.org $0033
+    reti
+.org $003B
+    reti
+.org $0043
+    reti
+.org $004B
+    clr1 P3INT, 0
+    clr1 P3INT, 1
+    reti
+
+.org $0130
+; Original firmware clock interrupt trampoline (VMUPet / Serpent method).
+timer_int:
+    push IE
+    clr1 IE, 7
+    not1 EXT, 0
+    jmpf timer_int
+    pop IE
+    reti
+
+.org $01F0
+goodbye:
+    not1 EXT, 0
+    jmpf goodbye
+
+.org $0200
+.text 16 "FACECHAN"
+.text 32 "FACE ONLY VMU COMPANION"
+.string 16 "FACECHAN"
+.org $0240
+.word 1,16
+.org $0260
+; ARGB4444 file-manager palette: dark field, clear face features.
+@PALETTE@
+.org $0280
+@ICON@
+
+.org $0480
+start:
+    clr1 IE, 7
+    mov #$80, SP
+    mov #$a1, OCR
+    mov #$09, MCR
+    mov #$80, VCCR
+    mov #$ff, P3
+    clr1 P3INT, 0
+    clr1 P3INT, 1
+    clr1 P1, 7
+    mov #0, XBNK
+    mov #0, PHASE
+    mov #0, TTL
+    mov #0, FRAME
+    mov #$3F, KEYLAST
+    set1 IE, 7
+main_loop:
+    callf keys
+    callf choose_frame
+    callf present
+    callf wait_frame
+    inc PHASE
+    jmpf main_loop
+
+keys:
+    bp P7,0,keys_quit
+    ld P3
+    bn ACC,6,keys_quit
+    bn ACC,7,keys_sleep
+    ret
+keys_quit:
+    jmpf goodbye
+keys_sleep:
+    bn P3,7,keys_sleep
+    mov #0, VCCR
+sleep_more:
+    set1 PCON,0
+    bp P7,0,keys_quit
+    bp P3,7,sleep_more
+    mov #$80,VCCR
+sleep_release:
+    bn P3,7,sleep_release
+    ret
+
+; Fourteen open-eye frames, then two closed-eye frames, repeating.
+; These are phase counts, not a claim about elapsed hardware time.
+choose_frame:
+    ld PHASE
+    and #$0f
+    st PHASE
+    be #14,choose_closed
+    be #15,choose_closed
+    mov #0,FRAME
+    ret
+choose_closed:
+    mov #1,FRAME
+    ret
+
+; Two 16-bit little-endian frame pointers.
+present:
+    mov #<frame_table, TRL
+    mov #>frame_table, TRH
+    ld FRAME
+    add FRAME
+    st INDEX
+    ld INDEX
+    ldc
+    st PTRLO
+    inc INDEX
+    ld INDEX
+    ldc
+    st TRH
+    ld PTRLO
+    st TRL
+    callf paint
+    ret
+
+paint:
+    clr1 OCR,5
+    push ACC
+    push XBNK
+    push C
+    push 2
+    mov #$80, 2
+    mov #0, XBNK
+    mov #0, C
+    ld C
+paint_loop:
+    ldc
+    st @R2
+    inc 2
+    ld 2
+    and #$0f
+    bne #$0c,paint_no_gap
+    ld 2
+    add #4
+    st 2
+    bnz paint_no_gap
+    inc XBNK
+    mov #$80, 2
+paint_no_gap:
+    inc C
+    ld C
+    bne #$c0,paint_loop
+    pop 2
+    pop C
+    pop XBNK
+    pop ACC
+    set1 OCR,5
+    ret
+
+; Delay loop unchanged from the console-tested original variant.
+wait_frame:
+    push B
+    push C
+    mov #12,B
+wait_outer:
+    mov #0,C
+wait_inner:
+    dbnz C,wait_inner
+    dbnz B,wait_outer
+    pop C
+    pop B
+    ret
+
+frame_table:
+@POINTERS@
+
+; Two complete 48x32 frames, six bytes per row, 192 bytes each.
+@FRAMES@
+.cnop 0,$200
