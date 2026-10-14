@@ -1,18 +1,26 @@
 # Stack-chan Face for VMU
 
-A separate, face-only version: round eyes, a straight mouth and an occasional binary blink. The LCD contains no robot body, text, border or speech bubbles. A/B and the directional pad leave the face alone; MODE returns to the VMU menu, and SLEEP uses the existing sleep path.
+A separate, face-only version with the ebazchan expression family: Neutral, Happy, Angry, Sad, Sleepy and Doubt. It automatically changes expressions, blinks, shifts its gaze, breathes, tilts and animates the mouth. The LCD contains no robot body, text, border or speech bubbles. A/B and the directional pad leave the automatic display alone; MODE returns to the VMU menu, and SLEEP uses the existing sleep path.
 
 The original `STACKCHN.VMS` program stays unchanged. This variant is `FACECHAN.VMS` with matching `FACECHAN.VMI` download metadata. It reuses the original program's now-confirmed startup, interrupt trampoline, LCD copying and system-button handling. New physical acceptance is recorded separately.
 
 ![Enlarged native-pixel face preview; animation timing is illustrative](preview.gif)
 
-The generated program is 2,048 bytes (4 VMU blocks). Its current VMS SHA-256 is `0cff3d44bf0d156181773a1713cec817f23066cd57b4a47ef049681e5459709f`. All 18 bounded program checks pass, including complete LCD frame writes, action-key invariance, blink selection and limited MODE/SLEEP/dock control flow. Two fresh builds produce identical files. New physical VMU acceptance remains pending.
+The earlier 4-block blink-only build remains in its original local release files. The current build retains the requested expression and movement variations. Its generated manifest records the actual size, hashes, sprite bank and animation schedule. New physical VMU acceptance remains pending.
+
+The expression edition is 7,680 bytes (15 VMU blocks), with 31 deduplicated sprites and 192 scheduled ticks. VMS SHA-256: `206ec7732eb6eb3e914a9a7026d7f138ccc704dbcbb250b9008ce11d25dd8563`.
+
+![The six source expression states, enlarged from actual LCD pixels](expressions.png)
 
 ## Face reference
 
 The artwork comes from the procedural look of the ebazchan `samples/stackchang_face` demo, based on [m5stack-avatar](https://github.com/meganetaaan/m5stack-avatar) (MIT, Copyright 2018 Shinya Ishikawa). That reference uses two circles and a rectangular mouth, rather than a bitmap asset. The neutral 240×240 scene has eye centers (50,93)/(190,96), radius 8, and a 90×4 mouth centered at (123,148). Closed eyes become 16×4 bars.
 
-This version scales uniformly by one fifth and crops unused top/bottom margins, taking source rows 40–199. It fits the 48×32 LCD without stretching the face. Thin strokes remain at least one pixel. LCD dark pixels form the background and clear pixels form the face. The upstream notice and the runtime's third-party notices are in [THIRD_PARTY_NOTICES.txt](../THIRD_PARTY_NOTICES.txt).
+Happy keeps an upper crescent after cutting the inner circle and lower half. Angry and Sad cut opposite triangles from the upper eye regions; Sleepy retains the lower circular segment. Doubt intentionally shares Neutral's round eye shape in the source. The mouth is always rectangular: it becomes narrower and taller when open, never a curved smile or frown.
+
+Scene positions and mouth geometry scale uniformly by one fifth, cropping unused top/bottom margins at source rows 40–199. The tiny eyes use optically adjusted 4×4 glyphs so the same crescent or slope remains visible in both eyes; directly shrinking the source made one crescent collapse to a line. These glyphs are an LCD adaptation, not pixel-identical source shapes. Gaze, breathing and whole-face tilt still move the face. LCD dark pixels form the background and clear pixels form the face. The upstream notice and the runtime's third-party notices are in [THIRD_PARTY_NOTICES.txt](../THIRD_PARTY_NOTICES.txt).
+
+The original independently timed random motions are adapted to a deterministic 192-tick loop so every expression appears. Each expression has 32 ticks: rest, blink, left/right gaze with breathing and tilt, then a closed-to-open-to-closed mouth sequence. Sprite bytes are deduplicated without dropping expression stages. The GIF uses the same timeline and sprites as the VMU; its display duration is illustrative, not a hardware timing measurement.
 
 ## Build and validate
 
@@ -23,9 +31,9 @@ python face/build_face.py NEW_FACE_OUTPUT_DIR
 python face/test_face.py NEW_FACE_OUTPUT_DIR
 ```
 
-The output directory contains the VMS/VMI, generated assembly and frame bytes, symbol table, manifest, save icon and actual-pixel previews. Existing generated files are preserved. This command does not rebuild or overwrite the original program.
+The output directory contains the VMS/VMI, generated assembly and frame bytes, animation timeline, symbol table, manifest, save icon and actual-pixel previews. `expressions.png` labels the six resting expressions outside the LCD images. Existing generated files are preserved. This command does not rebuild or overwrite the original program.
 
-The bounded interpreter checks actual LC86K execution and LCD writes. It does not emulate the VMU BIOS, interrupts, real display timing or physical power consumption. The blink is selected for two frames in every sixteen; the physical interval depends on the hardware. MODE, docking and sleep tests check control flow only.
+The bounded interpreter checks actual LC86K execution, complete LCD writes and timeline wraparound. It does not emulate the VMU BIOS, interrupts, real display timing or physical power consumption. MODE, docking and sleep tests check control flow only.
 
 ## Transfer disc
 

@@ -8,6 +8,7 @@ the sleep and exit tests therefore check machine-code control flow only.
 
 from pathlib import Path
 import argparse
+import hashlib
 import json
 import struct
 import sys
@@ -21,26 +22,59 @@ BUILD_DIR = None
 ROM = b""
 FRAMES = b""
 SYMBOLS = {}
+ANIMATION = {}
 FRAME_BYTES = 192
 FRAME = 0x20
+PHASE = 0x21
 P3 = 0x14C
 P7 = 0x15C
 VCCR = 0x127
 PCON = 0x107
 EXT = 0x10D
 INSTRUCTION_LIMIT = 100000
+EXPRESSIONS = ("neutral", "happy", "angry", "sad", "sleepy", "doubt")
+POSE_SCHEDULE = (("rest", 8), ("blink", 2), ("lookleft", 4),
+                 ("lookright", 4), ("mouthquarter", 2), ("mouthhalf", 2),
+                 ("mouthfull", 2), ("mouthhalf", 2), ("mouthquarter", 2),
+                 ("rest", 4))
 
 
 def configure(build_dir):
-    global BUILD_DIR, ROM, FRAMES, SYMBOLS
+    global BUILD_DIR, ROM, FRAMES, SYMBOLS, ANIMATION
     BUILD_DIR = Path(build_dir).resolve()
     ROM = (BUILD_DIR / "FACECHAN.VMS").read_bytes()
     FRAMES = (BUILD_DIR / "frames.bin").read_bytes()
     SYMBOLS = json.loads((BUILD_DIR / "symbols.json").read_text())
+    ANIMATION = json.loads((BUILD_DIR / "animation.json").read_text())
     # CPU.fetch/ldc resolve their globals in smoke_test, not in this module.
     smoke_test.ROM = ROM
     smoke_test.FRAMES = FRAMES
     smoke_test.SYM = SYMBOLS
+
+
+def sprite_bytes(index):
+    return FRAMES[index * FRAME_BYTES:(index + 1) * FRAME_BYTES]
+
+
+def pose_frame(expression, pose):
+    matches = [sprite["id"] for sprite in ANIMATION["sprites"]
+               if any(item["expression"] == expression and item["pose"] == pose
+                      for item in sprite["poses"])]
+    if len(matches) != 1:
+        raise AssertionError(f"Expected one sprite for {expression}/{pose}; found {matches}")
+    return sprite_bytes(matches[0])
+
+
+def mouth_size(frame):
+    # The lower LCD half contains the mouth; eyes occupy the upper half.
+    # A zero bit is a clear feature on the dark field. Measure the resulting
+    # bitmap, without reproducing the procedural art's shape calculations.
+    pixels = [(x, y) for y in range(16, 32) for x in range(48)
+              if not frame[y * 6 + x // 8] & (0x80 >> (x % 8))]
+    if not pixels:
+        raise AssertionError("Mouth has no visible pixels")
+    xs, ys = zip(*pixels)
+    return max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
 
 
 class FaceArtifactTests(unittest.TestCase):
@@ -61,16 +95,68 @@ class FaceArtifactTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<H", vmi, 0x64)[0], 2)
         self.assertEqual(struct.unpack_from("<I", vmi, 0x68)[0], len(ROM))
 
-    def test_two_frame_pointer_entries_address_the_exact_art_bytes(self):
-        self.assertEqual(len(FRAMES), 2 * FRAME_BYTES)
-        self.assertNotEqual(FRAMES[:FRAME_BYTES], FRAMES[FRAME_BYTES:])
+    def test_dynamic_frame_pointers_address_every_complete_art_sprite(self):
+        self.assertEqual(len(FRAMES) % FRAME_BYTES, 0)
+        count = len(FRAMES) // FRAME_BYTES
+        self.assertGreater(count, 1)
+        self.assertLessEqual(count, 127)
         table = SYMBOLS["frame_table"]
-        pointers = struct.unpack_from("<HH", ROM, table)
-        self.assertEqual(pointers, (SYMBOLS["frame00"], SYMBOLS["frame01"]))
+        pointers = struct.unpack_from(f"<{count}H", ROM, table)
         for index, address in enumerate(pointers):
             with self.subTest(frame=index):
+                self.assertEqual(address, SYMBOLS[f"frame{index:02}"])
                 self.assertEqual(ROM[address:address + FRAME_BYTES],
-                                 FRAMES[index * FRAME_BYTES:(index + 1) * FRAME_BYTES])
+                                 sprite_bytes(index))
+
+    def test_timeline_has_six_expressions_in_order_for_32_ticks_each(self):
+        self.assertEqual(ANIMATION["expressions"], list(EXPRESSIONS))
+        self.assertEqual(ANIMATION["ticks_per_expression"], 32)
+        self.assertEqual(ANIMATION["expression_labels"],
+                         [expression for expression in EXPRESSIONS for _ in range(32)])
+
+    def test_each_expression_uses_the_required_pose_durations(self):
+        self.assertEqual([(item["pose"], item["ticks"]) for item in ANIMATION["segments"]],
+                         list(POSE_SCHEDULE))
+        poses = [pose for pose, ticks in POSE_SCHEDULE for _ in range(ticks)]
+        self.assertEqual(ANIMATION["phase_states"], poses * len(EXPRESSIONS))
+
+    def test_rom_timeline_matches_192_valid_declared_frame_ids(self):
+        timeline = ANIMATION["frame_ids"]
+        self.assertEqual(len(timeline), 192)
+        count = len(FRAMES) // FRAME_BYTES
+        self.assertTrue(all(type(index) is int and 0 <= index < count for index in timeline))
+        address = SYMBOLS["animation_table"]
+        self.assertEqual(ROM[address:address + 192], bytes(timeline))
+
+    def test_sprite_metadata_binds_each_timeline_pose_to_its_actual_bitmap(self):
+        sprites = ANIMATION["sprites"]
+        count = len(FRAMES) // FRAME_BYTES
+        self.assertEqual([sprite["id"] for sprite in sprites], list(range(count)))
+        for sprite in sprites:
+            with self.subTest(sprite=sprite["id"]):
+                self.assertEqual(hashlib.sha256(sprite_bytes(sprite["id"])).hexdigest(),
+                                 sprite["sha256"])
+        for tick, frame_id in enumerate(ANIMATION["frame_ids"]):
+            with self.subTest(tick=tick):
+                self.assertEqual(pose_frame(ANIMATION["expression_labels"][tick],
+                                            ANIMATION["phase_states"][tick]),
+                                 sprite_bytes(frame_id))
+
+    def test_happy_angry_sad_and_sleepy_are_distinct_at_the_same_rest_pose(self):
+        faces = [pose_frame(expression, "rest") for expression in EXPRESSIONS[:5]]
+        self.assertEqual(len(set(faces)), 5)
+
+    def test_doubt_matches_neutral_for_all_poses_and_documents_the_source_alias(self):
+        self.assertEqual(ANIMATION["expression_aliases"]["doubt"], "neutral")
+        for pose in {pose for pose, _ in POSE_SCHEDULE}:
+            with self.subTest(pose=pose):
+                self.assertEqual(pose_frame("doubt", pose), pose_frame("neutral", pose))
+
+    def test_full_open_mouth_is_narrower_and_taller_than_the_closed_mouth(self):
+        rest_width, rest_height = mouth_size(pose_frame("neutral", "rest"))
+        open_width, open_height = mouth_size(pose_frame("neutral", "mouthfull"))
+        self.assertLess(open_width, rest_width)
+        self.assertGreater(open_height, rest_height)
 
 
 class FaceMachineTests(unittest.TestCase):
@@ -90,21 +176,14 @@ class FaceMachineTests(unittest.TestCase):
         return cpu
 
     def assert_frame(self, cpu, number):
-        selected = 0 if number % 16 < 14 else 1
+        phase = number % 192
+        selected = ANIMATION["frame_ids"][phase]
+        self.assertEqual(cpu.r(PHASE), phase,
+                         f"wrong animation phase at displayed frame {number}")
         self.assertEqual(cpu.r(FRAME), selected,
                          f"wrong selected face at displayed frame {number}")
-        self.assertEqual(cpu.lcd(), FRAMES[selected * FRAME_BYTES:(selected + 1) * FRAME_BYTES],
+        self.assertEqual(cpu.lcd(), sprite_bytes(selected),
                          f"LCD RAM differs from the complete face at displayed frame {number}")
-
-    def assert_ignored_action(self, key):
-        cpu = self.ready_cpu()
-        for frame in range(64):
-            # Press just before each blink, hold across the blink and wrap, then
-            # release. Resetting the blink phase would visibly fail this check.
-            cpu.current_key = key if 13 <= frame % 32 < 22 else 0xFF
-            self.run_to(cpu, "wait_frame")
-            self.assert_frame(cpu, frame)
-            self.run_to(cpu, "main_loop", step_first=True)
 
     def assert_firmware_exit(self, cpu):
         self.run_to(cpu, "goodbye")
@@ -113,39 +192,33 @@ class FaceMachineTests(unittest.TestCase):
         self.assertEqual(cpu.r(EXT), before ^ 1,
                          "exit must toggle firmware bank control EXT bit 0")
 
-    def test_reset_reaches_the_complete_open_face_before_the_first_delay(self):
+    def test_reset_reaches_the_complete_neutral_rest_face_before_the_first_delay(self):
         cpu = smoke_test.CPU()
         self.run_to(cpu, "wait_frame")
         self.assert_frame(cpu, 0)
         self.assertEqual(cpu.r(VCCR), 0x80)
 
-    def test_64_displayed_frames_repeat_14_open_then_2_closed(self):
+    def test_two_full_cycles_and_wrap_render_every_pose_despite_varied_action_keys(self):
         cpu = self.ready_cpu()
-        for frame in range(64):
+        actions = (0xFF, 0xEF, 0xDF, 0xFE, 0xFD, 0xFB, 0xF7, 0xC0)
+        seen_actions = set()
+        seen_poses = set()
+        # First cycle has no input; the second presses, holds and releases all
+        # six action keys and their combination across pose and expression edges.
+        for frame in range(385):
+            key = 0xFF if frame < 192 else actions[(frame // 5) % len(actions)]
+            cpu.current_key = key
+            seen_actions.add(key)
             self.run_to(cpu, "wait_frame")
             self.assert_frame(cpu, frame)
+            phase = frame % 192
+            seen_poses.add((ANIMATION["expression_labels"][phase],
+                            ANIMATION["phase_states"][phase]))
             self.run_to(cpu, "main_loop", step_first=True)
-
-    def test_a_is_ignored_without_resetting_the_blink(self):
-        self.assert_ignored_action(0xEF)
-
-    def test_b_is_ignored_without_resetting_the_blink(self):
-        self.assert_ignored_action(0xDF)
-
-    def test_up_is_ignored_without_resetting_the_blink(self):
-        self.assert_ignored_action(0xFE)
-
-    def test_down_is_ignored_without_resetting_the_blink(self):
-        self.assert_ignored_action(0xFD)
-
-    def test_left_is_ignored_without_resetting_the_blink(self):
-        self.assert_ignored_action(0xFB)
-
-    def test_right_is_ignored_without_resetting_the_blink(self):
-        self.assert_ignored_action(0xF7)
-
-    def test_all_six_action_keys_are_ignored_together(self):
-        self.assert_ignored_action(0xC0)
+        self.assertEqual(seen_actions, set(actions))
+        self.assertEqual(seen_poses,
+                         {(expression, pose) for expression in EXPRESSIONS
+                          for pose, _ in POSE_SCHEDULE})
 
     def test_mode_active_low_takes_the_firmware_exit_path(self):
         cpu = self.ready_cpu()

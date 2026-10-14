@@ -28,6 +28,7 @@ GENERATED_FILES = (
     "FACECHAN.VMS", "FACECHAN.VMI", "face.s", "frames.bin", "icon.bin",
     "icon.png", "symbols.json", "manifest.json", "face.png", "preview.gif",
     "neutral.png", "blink.png",
+    "animation.json", "expressions.png",
 )
 
 
@@ -77,7 +78,11 @@ def build(output_dir: Path | str) -> dict:
         art = generate(staging)
         frames = (staging/"frames.bin").read_bytes()
         icon = (staging/"icon.bin").read_bytes()
-        if len(frames) != 384 or len(icon) != 512:
+        animation = json.loads((staging/"animation.json").read_text(encoding="utf-8"))
+        frame_count = art["frame_count"]
+        if (not 1 <= frame_count <= 127 or len(frames) != frame_count*192
+                or len(icon) != 512 or len(animation["frame_ids"]) != 192
+                or any(not 0 <= frame_id < frame_count for frame_id in animation["frame_ids"])):
             raise ValueError("Face assets have unexpected dimensions")
         palette = b"".join(struct.pack("<H", colour)
                            for colour in [0xf000, 0xffff] + [0xf000]*14)
@@ -86,10 +91,12 @@ def build(output_dir: Path | str) -> dict:
                                   for name, address in sorted(assembler.SFR.items())),
             "@PALETTE@": _byte_lines(palette),
             "@ICON@": _byte_lines(icon),
-            "@POINTERS@": "    .word frame00,frame01",
+            "@TIMELINE@": _byte_lines(bytes(animation["frame_ids"])),
+            "@POINTERS@": "\n".join("    .word " + ",".join(f"frame{index:02}" for index in range(offset, min(offset+8, frame_count)))
+                                      for offset in range(0, frame_count, 8)),
             "@FRAMES@": "\n\n".join(
                 f"frame{i:02}:\n" + _byte_lines(frames[i*192:(i+1)*192])
-                for i in range(2)),
+                for i in range(frame_count)),
         }
         source = (HERE/"face.s.in").read_text(encoding="utf-8")
         for marker, content in substitutions.items():
@@ -97,12 +104,13 @@ def build(output_dir: Path | str) -> dict:
                 raise ValueError(f"Expected exactly one template marker: {marker}")
             source = source.replace(marker, content)
         binary, symbols = assembler.assemble(source)
-        if not (len(binary) % 512 == 0 and symbols["start"] == 0x480
+        if not (len(binary) % 512 == 0 and len(binary) <= 65536 and symbols["start"] == 0x480
                 and binary[:3] == bytes((0x21, 0x04, 0x80))
                 and binary[0x200:0x210].startswith(b"FACECHAN")
                 and binary[0x280:0x480] == icon
-                and binary[symbols["frame00"]:symbols["frame00"]+384] == frames
-                and symbols["frame01"] == symbols["frame00"]+192):
+                and binary[symbols["frame00"]:symbols["frame00"]+len(frames)] == frames
+                and all(symbols[f"frame{i:02}"] == symbols["frame00"]+192*i for i in range(frame_count))
+                and binary[symbols["animation_table"]:symbols["animation_table"]+192] == bytes(animation["frame_ids"])):
             raise ValueError("Assembled game layout failed its build invariants")
         (staging/"FACECHAN.VMS").write_bytes(binary)
         (staging/"FACECHAN.VMI").write_bytes(make_vmi(binary))
@@ -115,12 +123,15 @@ def build(output_dir: Path | str) -> dict:
             "resource_name": "FACECHAN", "vmu_filename": "FACECHAN",
             "game_flag": 2, "vms_bytes": len(binary), "vmu_blocks": len(binary)//512,
             "layout": {"vectors": 0, "header": 0x200, "icon": 0x280, "start": 0x480},
-            "runtime": {"phase_count": 16, "open_phases": list(range(14)),
-                        "closed_phases": [14, 15], "controls": "MODE/SLEEP/dock exit retained; A/B/D-pad ignored",
+            "runtime": {"phase_count": 192, "ticks_per_expression": 32,
+                        "expressions": animation["expressions"], "frame_count": frame_count,
+                        "timeline": "animation.json; ROM label animation_table",
+                        "motions": "rest, binary blink, breath/gaze/tilt, mouth quarter/half/full/half/quarter",
+                        "controls": "MODE/SLEEP/dock exit retained; A/B/D-pad ignored",
                         "delay": "original wait_frame instructions unchanged; elapsed timing unmeasured"},
             "art": art,
             "provenance": {
-                "reference": "ebazchan procedural neutral face",
+                "reference": "ebazchan samples/stackchang_face/src/stackchang_face.v; six expression families and motions",
                 "upstream": "https://github.com/stack-chan/m5stack-avatar",
                 "copyright": "Copyright (c) 2018 Shinya Ishikawa",
                 "license": "MIT; see distributed THIRD_PARTY_NOTICES.txt",

@@ -1,5 +1,5 @@
 ; FACECHAN: a standalone, face-only Dreamcast Visual Memory Unit game.
-; Neutral face geometry adapted from ebazchan / M5Stack-Avatar.
+; Six expression families and face motion from ebazchan / M5Stack-Avatar.
 ; M5Stack-Avatar: Copyright (c) 2018 Shinya Ishikawa, MIT License.
 ; See THIRD_PARTY_NOTICES.txt distributed with this game.
 @REGS@
@@ -102,21 +102,22 @@ sleep_release:
     bn P3,7,sleep_release
     ret
 
-; Fourteen open-eye frames, then two closed-eye frames, repeating.
-; These are phase counts, not a claim about elapsed hardware time.
+; The 192-tick table visits six expression families with blink, gaze,
+; breathing/tilt poses and a mouth opening/closing sequence for each.
+; Ticks are not a claim about elapsed hardware time.
 choose_frame:
     ld PHASE
-    and #$0f
-    st PHASE
-    be #14,choose_closed
-    be #15,choose_closed
-    mov #0,FRAME
-    ret
-choose_closed:
-    mov #1,FRAME
+    bne #192,choose_lookup
+    mov #0,PHASE
+choose_lookup:
+    mov #<animation_table,TRL
+    mov #>animation_table,TRH
+    ld PHASE
+    ldc
+    st FRAME
     ret
 
-; Two 16-bit little-endian frame pointers.
+; Indexed 16-bit little-endian frame pointers (no more than 127 sprites).
 present:
     mov #<frame_table, TRL
     mov #>frame_table, TRH
@@ -183,9 +184,12 @@ wait_inner:
     pop B
     ret
 
+animation_table:
+@TIMELINE@
+
 frame_table:
 @POINTERS@
 
-; Two complete 48x32 frames, six bytes per row, 192 bytes each.
+; Deduplicated complete 48x32 frames, six bytes per row, 192 bytes each.
 @FRAMES@
 .cnop 0,$200
