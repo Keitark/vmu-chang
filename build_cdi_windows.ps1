@@ -1,4 +1,5 @@
-# Build a real bootable .CDI for the original Dreamcast using VMU Disc Builder.
+# Build an experimental Dreamcast transfer .CDI using VMU Disc Builder.
+# Physical-console boot remains unresolved; see docs/boot-status.md.
 # This script runs on Windows. It downloads the upstream v1.1 release once,
 # adds our VMI/VMS game and invokes the official Disc Builder.
 # A dummy file is enabled by default for better burned CD-R compatibility.

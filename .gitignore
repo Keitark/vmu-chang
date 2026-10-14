@@ -1,0 +1,18 @@
+# Downloaded Dreamcast disc-building tools and generated disc images
+vmudisc_tools/
+VMU.Disc.Builder.*.zip
+*.cdi
+*.iso
+*.mds
+*.mdf
+*.nrg
+
+# Local emulator/BIOS files and VMU build intermediates
+dc_boot.bin
+dc_flash.bin
+symbols.json
+frame_*.png
+__pycache__/
+*.pyc
+.venv/
+venv/

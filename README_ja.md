@@ -19,14 +19,18 @@ M5Stack-Avatar / ｽﾀｯｸﾁｬﾝの実機表情に近づけるため、黒
 
 放置すると自動でまばたき、視線移動、呼吸風の上下動、微笑みが発生します。全32フレーム。A/B/十字キーを押したときはボタンを離しても約数秒間動作します。外部ネットワーク接続やLLMは使いません。
 
-## 実機へのインストール（MIL-CD対応Dreamcast）
+## 実機へのインストール手順（実験中・起動問題は未解決）
+
+2026-10-14時点では、元のData/Data CDIはFlycast 2.7のHLE BIOSでSEGAロゴからブラウザまで起動しましたが、利用者のMIL-CD対応・日本版DreamcastではSEGAロゴ前に本体メニューへ戻りました。CDのPC読戻し照合は成功しています。後から作成したAudio/Data変換版はSEGAロゴで停止しており、代替として使用できません。詳細は [docs/boot-status.md](docs/boot-status.md) を参照してください。
+
+以下は本来想定した転送手順です。実機での起動・VMUへの転送成功を保証するものではありません。
 
 必要物: VMU、Dreamcastとコントローラー、CD-Rと書き込みドライブ、Windows PC、インターネット接続。
 
 1. このZIPをWindows PCへ展開します。
 2. `BUILD_CDI.bat` を実行します。
 3. 初回だけ [VMU Disc Builder v1.1](https://github.com/DerekPascarella/VMU-Disc-Builder/releases/tag/1.1) がGitHubから取得されます。
-4. `VMU_STACKCHAN.cdi` が作られます。物理CD-R向けの互換性のためデフォルトではダミーファイルを追加しており、**約550 MBのイメージ**になります。大きいのは正常です。
+4. `VMU_STACKCHAN.cdi` が作られます。デフォルトではダミーファイルを追加して約550 MiBのファイルシステムを作るため、CDI全体はさらに大きくなります。今回の元CDIは659,785,440バイトです。大きさは実機起動成功の証拠ではありません。
 5. ImgBurnなどのCDI対応書き込みツールで**イメージとして**CD-Rに焼きます（ファイルを通常のデータCDとして書き込むのではありません）。
 6. DreamcastをそのCDから起動し、VMU Disc Builder由来のブラウザ型メニューで `STACKCHAN` を選び、VMUにダウンロードします。
 7. CDを終え、VMUをコントローラーから取り外してVMU本体のメニューから `VMU STACK-CHAN` を実行します。
@@ -51,12 +55,12 @@ powershell -ExecutionPolicy Bypass -File .\build_cdi_windows.ps1 -NoDummy
 - `build_cdi_windows.ps1`, `BUILD_CDI.bat` — 実機MIL-CD用イメージ構築
 - `preview.gif`, `showcase.png` — 表示の雰囲気（実機LCDカラーではない擬似表示）
 
-ソースから作り直すには、Python 3とPillowを導入後、`python make_art.py` → `python build_vms.py` → `python smoke_test.py` の順に実行します。`build_vms.py`はこのフォルダ内のVMS/VMIバイナリを更新します。`stackchan.s`はWaterbear互換の命令書式でも出力します。
+ソースから作り直すには、Python 3とPillowを導入後、`python make_art.py` → `python build_vms.py` → `python smoke_test.py` の順に実行します。`build_vms.py`内のアセンブリテンプレートが編集元であり、このフォルダ内のVMS/VMIバイナリ、テスト用`symbols.json`、生成された`stackchan.s`を更新します。`stackchan.s`はWaterbear互換の命令書式でも出力します。
 
 ## 検証と注意事項
 
 - 独自の最小LC86K命令インタプリタ上で、206フレームの画面RAMへの転送・6ボタンの反応・まばたき/視線移動を検証済みです。
-- **Dreamcast実機とVMU実機での起動・描画は未検証です。** フレーム速度やハードウェア依存の動作は、必要に応じて実機で調整してください。
+- **Dreamcast実機での元ディスクの起動は失敗しており、VMU実機での起動・描画は未検証です。** Flycast HLEの起動成功、PCでのCD照合成功、簡易LC86Kテストは、実機の起動成功を意味しません。
 - `BUILD_CDI.bat` / PowerShellは利用者のWindows上で第三者ツールをダウンロードして実行します。実行前に内容と上流配布元を確認してください。
 - `VMS` 内にサウンドやAI音声は含まれません。小さな「MNYA」吹き出しによる擬似おしゃべりです。
 - 画面デザインはｽﾀｯｸﾁｬﾝの公開情報を参考にした非公式の低解像度ファン実装です。
