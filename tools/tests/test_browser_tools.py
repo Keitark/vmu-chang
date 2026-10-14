@@ -53,6 +53,143 @@ class BrowserPatchTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), b"previous accepted candidate")
 
 
+class HardwareStartupTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        raw = bytearray((i * 17 + 3) % 256 for i in range(prepare_browser.SOURCE_BYTES))
+        raw[:12] = b"\x09\x00" * 6
+        struct.pack_into("<I", raw, prepare_browser.PVD_OFFSET, 166)
+        struct.pack_into("<I", raw, prepare_browser.CACHE_TARGET_OFFSET, prepare_browser.SOURCE_CACHE_TARGET)
+        cls.raw = bytes(raw)
+        cls.shim = b"\x09\x00" * 8
+        cls.address = 0xAC010000 + len(raw)
+
+    def test_hardware_patch_preserves_surrounding_browser_bytes(self):
+        for layout, pvd in (("data-data", 166), ("audio-data", 11868)):
+            for alias in (self.address + 4, (self.address + 4) & ~0x20000000):
+                with self.subTest(layout=layout, alias=hex(alias)), mock.patch.object(prepare_browser, "validate_source"):
+                    result, address, actual_pvd = prepare_browser.inject_adapter(
+                        self.raw, self.shim, layout, hardware_startup=True, cache_entry=alias)
+                    self.assertEqual(address, self.address)
+                    self.assertEqual(actual_pvd, pvd)
+                    self.assertEqual(struct.unpack_from("<I", result, 8)[0], address)
+                    self.assertEqual(struct.unpack_from("<I", result, prepare_browser.CACHE_TARGET_OFFSET)[0], self.address + 4)
+                    self.assertEqual(result[len(self.raw):], self.shim)
+                    restored = bytearray(result[:len(self.raw)])
+                    for offset, size in ((0, 12), (prepare_browser.CACHE_TARGET_OFFSET, 4),
+                                         (prepare_browser.PVD_OFFSET, 4)):
+                        restored[offset:offset + size] = self.raw[offset:offset + size]
+                    self.assertEqual(bytes(restored), self.raw)
+
+    def test_unexpected_cache_target_is_rejected(self):
+        changed = bytearray(self.raw)
+        struct.pack_into("<I", changed, prepare_browser.CACHE_TARGET_OFFSET, 0x8C1DC364)
+        with mock.patch.object(prepare_browser, "validate_source"):
+            with self.assertRaisesRegex(ValueError, "cache target differs"):
+                prepare_browser.inject_adapter(bytes(changed), self.shim, "audio-data",
+                                               hardware_startup=True, cache_entry=self.address + 4)
+
+    def test_cache_entry_outside_appended_shim_is_rejected(self):
+        for entry in (self.address - 4, self.address + len(self.shim), 0xAC007000):
+            with self.subTest(entry=hex(entry)), mock.patch.object(prepare_browser, "validate_source"):
+                with self.assertRaisesRegex(ValueError, "outside the appended shim"):
+                    prepare_browser.inject_adapter(self.raw, self.shim, "audio-data",
+                                                   hardware_startup=True, cache_entry=entry)
+
+    def test_invalid_cache_entry_alias_is_rejected(self):
+        for entry in (self.address + 1, 0xEC2BD8E8, None):
+            with self.subTest(entry=entry), mock.patch.object(prepare_browser, "validate_source"):
+                with self.assertRaises(ValueError):
+                    prepare_browser.inject_adapter(self.raw, self.shim, "audio-data",
+                                                   hardware_startup=True, cache_entry=entry)
+
+    def prepare_with_fake_tools(self, folder, hardware_startup, shim=None):
+        source, tools = folder / "browser", folder / "tools"
+        source.mkdir()
+        tools.mkdir()
+        (source / "1ST_READ.BIN").write_bytes(self.raw)
+        for name in ("boot_shim.S", "boot_shim_hardware.S", "framebuffer_checkpoint.S", "override.S"):
+            (tools / name).write_text(f"; fixture {name}\n", encoding="utf-8")
+        commands = []
+
+        def run(command, capture=False):
+            commands.append(command)
+            if command[0].endswith("objcopy"):
+                Path(command[-1]).write_bytes(self.shim if shim is None else shim)
+            elif command[0].endswith("nm"):
+                return f"{self.address + 4:08x} T _shim_cache_entry"
+            elif "--version" in command:
+                return "GNU assembler fixture"
+
+        runner = mock.Mock()
+        runner.path.side_effect = lambda path: str(path)
+        runner.run.side_effect = run
+        with mock.patch.object(prepare_browser, "__file__", str(tools / "prepare_browser.py")), \
+                mock.patch.object(prepare_browser, "validate_source"):
+            manifest = prepare_browser.prepare_browser(source, folder / "adapted.bin",
+                                                       shim_path=tools / "override.S" if hardware_startup else None,
+                                                       runner=runner, toolchain_prefix="sh-elf-",
+                                                       hardware_startup=hardware_startup)
+        return manifest, commands, tools
+
+    def test_hardware_tools_include_standard_helper_and_guarded_literal_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            manifest, commands, tools = self.prepare_with_fake_tools(folder, True)
+            assembler = [command for command in commands if command[0] == "sh-elf-as" and "--version" not in command]
+            self.assertEqual(len(assembler), 2)
+            self.assertIn("VMU_FULL_GD_SETUP=1", assembler[0])
+            self.assertEqual(assembler[0][-1], str(tools / "override.S"))
+            self.assertEqual(assembler[1][-1], str(tools / "framebuffer_checkpoint.S"))
+            linker = next(command for command in commands if command[0] == "sh-elf-ld")
+            self.assertEqual([Path(path).name for path in linker[-2:]], ["shim.o", "checkpoint.o"])
+            objcopy = next(command for command in commands if command[0] == "sh-elf-objcopy")
+            self.assertEqual(objcopy[1:5], ["-j", ".text", "-O", "binary"])
+            self.assertEqual(manifest["startup_mode"], "hardware")
+            self.assertEqual(manifest["framebuffer_checkpoint_source_sha256"], prepare_browser.sha256(tools / "framebuffer_checkpoint.S"))
+            self.assertEqual(manifest["cache_entry_patch"]["literal_offset"], "0x2c")
+            self.assertEqual(manifest["cache_entry_patch"]["original_target"], "0x8c1dc360")
+            self.assertEqual(manifest["cache_entry_patch"]["p2_target"], hex(self.address + 4))
+
+    def test_minimal_mode_keeps_cache_literal_and_compiles_only_original_shim(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            manifest, commands, tools = self.prepare_with_fake_tools(folder, False)
+            assembler = [command for command in commands if command[0] == "sh-elf-as" and "--version" not in command]
+            self.assertEqual(len(assembler), 1)
+            self.assertIn("VMU_FULL_GD_SETUP=0", assembler[0])
+            self.assertEqual(assembler[0][-1], str(tools / "boot_shim.S"))
+            self.assertFalse(any(command[0] == "sh-elf-nm" for command in commands))
+            result = (folder / "adapted.bin").read_bytes()
+            self.assertEqual(result[prepare_browser.CACHE_TARGET_OFFSET:prepare_browser.CACHE_TARGET_OFFSET + 4],
+                             self.raw[prepare_browser.CACHE_TARGET_OFFSET:prepare_browser.CACHE_TARGET_OFFSET + 4])
+            self.assertEqual(manifest["startup_mode"], "minimal")
+            self.assertIsNone(manifest["cache_entry_patch"])
+            self.assertIsNone(manifest["framebuffer_checkpoint_source"])
+
+    def test_oversize_shim_is_rejected_before_binary_read(self):
+        original_read = Path.read_bytes
+
+        def read(path):
+            if path.name == "shim.bin":
+                self.fail("Oversize shim must be rejected before reading it")
+            return original_read(path)
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(Path, "read_bytes", read):
+            folder = Path(directory)
+            with self.assertRaisesRegex(ValueError, "exceeds 8192 bytes"):
+                self.prepare_with_fake_tools(folder, True, shim=b"\0" * 8196)
+            self.assertFalse((folder / "adapted.bin").exists())
+            self.assertFalse((folder / "adapted.manifest.json").exists())
+
+    def test_missing_linked_cache_symbol_is_rejected(self):
+        runner = mock.Mock()
+        runner.path.side_effect = str
+        runner.run.return_value = "ac2bd8e4 T _shim_start"
+        with self.assertRaisesRegex(ValueError, "exactly one linked _shim_cache_entry"):
+            prepare_browser.linked_symbol(runner, "sh-elf-", Path("shim.elf"), "_shim_cache_entry")
+
+
 class PackagingTests(unittest.TestCase):
     def test_relative_payload_and_empty_directory_are_preserved(self):
         with tempfile.TemporaryDirectory() as directory:

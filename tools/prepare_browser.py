@@ -21,6 +21,9 @@ SOURCE_SHA256 = "f43d637858be93cef87da0fd9045e9cf8c1ef9a288bb15b808bee360fb997b1
 SOURCE_BYTES = 2808036
 PVD_OFFSET = 0x282CF0
 SOURCE_PVD_FAD = 166
+CACHE_TARGET_OFFSET = 0x2C
+SOURCE_CACHE_TARGET = 0x8C1DC360
+MAX_SHIM_BYTES = 8192
 SESSION_LBAS = {"audio-data": 11702, "data-data": 0}
 DEFAULT_TOOLCHAIN = "/root/.cache/boing-overdrive/dc/sdk-gcc15.1.0-kos2.2.1/sh-elf/bin/sh-elf-"
 
@@ -83,15 +86,30 @@ def validate_source(raw):
         raise ValueError("Browser PVD address differs from the audited original")
 
 
-def inject_adapter(raw, shim, layout):
-    """Patch the audited executable, preserving every byte outside two patches."""
+def inject_adapter(raw, shim, layout, hardware_startup=False, cache_entry=None):
+    """Patch the audited executable, preserving bytes outside guarded patches."""
     validate_source(raw)
     if not shim or len(shim) % 4:
         raise ValueError("The assembled shim must be nonempty and 4-byte aligned")
+    if len(shim) > MAX_SHIM_BYTES:
+        raise ValueError(f"The assembled shim exceeds {MAX_SHIM_BYTES} bytes")
     if layout not in SESSION_LBAS:
         raise ValueError(f"Unsupported layout {layout}")
     result = bytearray(raw)
     address = 0xAC010000 + len(raw)
+    if hardware_startup:
+        if struct.unpack_from("<I", raw, CACHE_TARGET_OFFSET)[0] != SOURCE_CACHE_TARGET:
+            raise ValueError("Browser cache target differs from the audited original")
+        if cache_entry is None or not 0 <= cache_entry <= 0xFFFFFFFF:
+            raise ValueError("Missing or invalid linked _shim_cache_entry address")
+        p2_entry = cache_entry | 0xA0000000
+        if (p2_entry & 0xE0000000) != 0xA0000000 or p2_entry & 1:
+            raise ValueError("The cache entry must have a valid aligned P2 alias")
+        if not address <= p2_entry < address + len(shim):
+            raise ValueError("The cache entry P2 alias is outside the appended shim")
+        if (cache_entry & 0x1FFFFFFF) != (p2_entry & 0x1FFFFFFF):
+            raise ValueError("The cache entry aliases do not refer to the same physical address")
+        struct.pack_into("<I", result, CACHE_TARGET_OFFSET, p2_entry)
     result[:12] = bytes.fromhex("01d02b4009000900") + struct.pack("<I", address)
     pvd_fad = SOURCE_PVD_FAD + SESSION_LBAS[layout]
     if layout == "audio-data":
@@ -100,38 +118,69 @@ def inject_adapter(raw, shim, layout):
     return bytes(result), address, pvd_fad
 
 
+def linked_symbol(runner, toolchain_prefix, elf, name):
+    symbols = runner.run([toolchain_prefix + "nm", "--defined-only", runner.path(elf)], capture=True)
+    matches = [line.split()[0] for line in symbols.splitlines()
+               if len(line.split()) == 3 and line.split()[2] == name]
+    if len(matches) != 1:
+        raise ValueError(f"Expected exactly one linked {name} symbol")
+    return int(matches[0], 16)
+
+
 def prepare_browser(browser_dir, output, layout="audio-data", shim_path=None,
-                    runner=None, toolchain_prefix=DEFAULT_TOOLCHAIN):
+                    runner=None, toolchain_prefix=DEFAULT_TOOLCHAIN, hardware_startup=False):
     browser_dir, output = Path(browser_dir).resolve(), Path(output).resolve()
     source = browser_dir / "1ST_READ.BIN"
-    shim_path = Path(shim_path or Path(__file__).with_name("boot_shim.S")).resolve()
+    default_shim = "boot_shim_hardware.S" if hardware_startup else "boot_shim.S"
+    shim_path = Path(shim_path or Path(__file__).with_name(default_shim)).resolve()
+    helper_path = Path(__file__).with_name("framebuffer_checkpoint.S").resolve() if hardware_startup else None
     manifest_path = output.with_suffix(".manifest.json")
     refuse_existing([output, manifest_path])
     raw = source.read_bytes()
     validate_source(raw)
     if not shim_path.is_file():
         raise FileNotFoundError(f"Missing shim source: {shim_path}")
+    if helper_path and not helper_path.is_file():
+        raise FileNotFoundError(f"Missing checkpoint source: {helper_path}")
     runner = runner or ToolRunner()
     address = 0xAC010000 + len(raw)
     with tempfile.TemporaryDirectory(prefix="vmu-browser-") as directory:
         scratch = Path(directory)
         obj, elf, binary = (scratch / name for name in ("shim.o", "shim.elf", "shim.bin"))
         runner.run([toolchain_prefix + "as", "-little", "-isa=sh4", "--defsym",
-                    "VMU_FULL_GD_SETUP=0", "-o", runner.path(obj), runner.path(shim_path)])
+                    f"VMU_FULL_GD_SETUP={int(hardware_startup)}", "-o", runner.path(obj), runner.path(shim_path)])
+        objects = [runner.path(obj)]
+        if helper_path:
+            helper_obj = scratch / "checkpoint.o"
+            runner.run([toolchain_prefix + "as", "-little", "-isa=sh4", "-o",
+                        runner.path(helper_obj), runner.path(helper_path)])
+            objects.append(runner.path(helper_obj))
         runner.run([toolchain_prefix + "ld", "-EL", "-Ttext", hex(address),
-                    "-e", "_shim_start", "-o", runner.path(elf), runner.path(obj)])
-        runner.run([toolchain_prefix + "objcopy", "-O", "binary", "-j", ".text",
+                    "-e", "_shim_start", "-o", runner.path(elf)] + objects)
+        runner.run([toolchain_prefix + "objcopy", "-j", ".text", "-O", "binary",
                     runner.path(elf), runner.path(binary)])
+        if binary.stat().st_size > MAX_SHIM_BYTES:
+            raise ValueError(f"The assembled shim exceeds {MAX_SHIM_BYTES} bytes")
+        cache_entry = linked_symbol(runner, toolchain_prefix, elf, "_shim_cache_entry") if hardware_startup else None
         shim = binary.read_bytes()
-    adapted, address, pvd_fad = inject_adapter(raw, shim, layout)
+    adapted, address, pvd_fad = inject_adapter(raw, shim, layout, hardware_startup, cache_entry)
     manifest = {
         "source": str(source), "source_sha256": hashlib.sha256(raw).hexdigest(),
         "source_bytes": len(raw), "layout": layout,
+        "startup_mode": "hardware" if hardware_startup else "minimal",
+        "hardware_startup": hardware_startup,
         "session_lba": SESSION_LBAS[layout], "pvd_fad": pvd_fad,
         "pvd_patch_offset": hex(PVD_OFFSET), "entry_patch_bytes": adapted[:12].hex(),
         "shim_source": str(shim_path), "shim_source_sha256": sha256(shim_path),
         "shim_address": hex(address), "shim_bytes": len(shim),
         "shim_sha256": hashlib.sha256(shim).hexdigest(),
+        "framebuffer_checkpoint_source": str(helper_path) if helper_path else None,
+        "framebuffer_checkpoint_source_sha256": sha256(helper_path) if helper_path else None,
+        "cache_entry_patch": {"literal_offset": hex(CACHE_TARGET_OFFSET),
+                              "original_target": hex(SOURCE_CACHE_TARGET),
+                              "linked_symbol": "_shim_cache_entry",
+                              "linked_target": hex(cache_entry),
+                              "p2_target": hex(cache_entry | 0xA0000000)} if hardware_startup else None,
         "toolchain_prefix": toolchain_prefix,
         "toolchain_version": runner.run([toolchain_prefix + "as", "--version"], capture=True).splitlines()[0],
         "output": str(output), "output_bytes": len(adapted),
@@ -149,7 +198,8 @@ def prepare_browser(browser_dir, output, layout="audio-data", shim_path=None,
 
 def add_tool_arguments(parser):
     parser.add_argument("--toolchain-prefix", default=DEFAULT_TOOLCHAIN)
-    parser.add_argument("--shim", type=Path, help="Override tools/boot_shim.S")
+    parser.add_argument("--shim", type=Path, help="Override the selected startup shim; hardware checkpoint helper stays standard")
+    parser.add_argument("--hardware-startup", action="store_true", help="Enable hardware startup setup and framebuffer checkpoints")
     parser.add_argument("--native", action="store_true", help="Use native tools instead of WSL on Windows")
     parser.add_argument("--wsl-distro", default="Ubuntu")
     parser.add_argument("--wsl-user", default="root")
@@ -165,7 +215,7 @@ def main():
     try:
         manifest = prepare_browser(args.browser_dir, args.output, args.layout, args.shim,
                                    ToolRunner(args.native, args.wsl_distro, args.wsl_user),
-                                   args.toolchain_prefix)
+                                   args.toolchain_prefix, hardware_startup=args.hardware_startup)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Preparation failed: {error}\n")
     print(json.dumps(manifest, indent=2))

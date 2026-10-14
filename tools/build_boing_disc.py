@@ -85,7 +85,8 @@ def build_disc(args):
             files = stage_payload(source, scratch / "content")
             adapted = scratch / "adapted.bin"
             adapter_info = prepare_browser(source, adapted, args.layout, args.shim,
-                                           runner, args.toolchain_prefix)
+                                           runner, args.toolchain_prefix,
+                                           hardware_startup=args.hardware_startup)
             # A Linux /tmp output avoids slow sector-by-sector writes through /mnt.
             if runner.use_wsl:
                 remote = runner.run(["mktemp", "-d", "-t", "vmu-disc.XXXXXXXX"], capture=True)
