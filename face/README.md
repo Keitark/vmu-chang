@@ -47,4 +47,8 @@ This wrapper stages a temporary browser tree, adds FACECHAN, and makes its downl
 
 Select **Download face to VMU**, choose a VMU and wait for save completion. Remove the VMU from the controller, press SLEEP, choose Game using MODE, then press A. Standalone operation requires working VMU batteries.
 
+The expression-edition `VMU_STACKCHAN_FACE_EXPRESSIONS.cdi` (SHA-256 `6cdd2f58d5c5851b571407f7a02d30225503c990471b4c596c3fa17a0798907a`) passed a visual installer-page check in Flycast 2.7 using HLE BIOS, Japan region and composite video. The original Dreamcast BIOS was not used. The local screenshot is `outputs/face-expressions-flycast-installer.jpg`.
+
+On 2026-10-15, the CD-R write completed in 8:02 with zero write retries. ImgBurn read-back verification then passed both sessions in 9:21, with zero read errors or mismatches (session 1: LBA 0–301; session 2: LBA 11702–327984). Local evidence is in `outputs/FACE-EXPRESSIONS-burn.log` and `outputs/FACE-EXPRESSIONS-burn-receipt.json`. Physical Dreamcast boot, VMU transfer and standalone VMU execution of this expression edition remain pending.
+
 The original program has user-confirmed physical boot and transfer. A successful build, interpreter test or Flycast browser test does not establish physical acceptance of this new variant.
